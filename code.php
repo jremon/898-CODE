@@ -144,7 +144,7 @@ $epochMadrid = time();
   <div class="container">
     <h1>898.es CODE</h1>
     <div class="warning-red">For optimized security, run this page offline</div>
-    
+
     <label for="username">User (optional):</label>
     <input type="text" id="username" placeholder="User">
 
@@ -169,8 +169,7 @@ $epochMadrid = time();
       return btoa(String.fromCharCode(...randomBytes));
     }
 
-    // Convert the raw bytes (Base64-decoded) to Base32 for "otpauth://"
-    // (simple subset, ignoring potential padding complexity for brevity)
+    // Convert raw bytes (Base64-decoded) to Base32
     function toBase32(uint8Arr) {
       const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
       let bits = 0,
@@ -192,11 +191,8 @@ $epochMadrid = time();
     }
 
     // Calculate TOTP using HMAC-SHA512, returning a 6-digit code
-    // (though standard TOTP typically uses SHA-1 or SHA-256,
-    //  we'll keep it with SHA-512 as in your original code)
     async function calculateTOTP(secretBase64, epochSeconds) {
       const keyData = Uint8Array.from(atob(secretBase64), c => c.charCodeAt(0));
-      // Prepare HMAC-SHA512 key
       const key = await crypto.subtle.importKey(
         "raw",
         keyData,
@@ -205,16 +201,16 @@ $epochMadrid = time();
         ["sign"]
       );
 
-      // TOTP period 120s => counter = floor(epoch / 120)
+      // TOTP period = 120 seconds => counter = floor(epoch / 120)
       const period = 120;
       const counterValue = Math.floor(epochSeconds / period);
 
-      // 8-byte buffer, big-endian for the counter
+      // 8-byte buffer for counter (big-endian)
       const counterBuffer = new ArrayBuffer(8);
       const counterView = new DataView(counterBuffer);
       counterView.setUint32(4, counterValue, false);
 
-      // Compute HMAC
+      // HMAC
       const signature = await crypto.subtle.sign("HMAC", key, counterBuffer);
       const signatureBytes = new Uint8Array(signature);
 
@@ -226,47 +222,47 @@ $epochMadrid = time();
         ((signatureBytes[offset + 2] & 0xff) << 8)  |
         (signatureBytes[offset + 3] & 0xff);
 
-      // Return 6-digit TOTP
+      // 6-digit TOTP
       const totp = binary % 10**6;
       return totp.toString().padStart(6, "0");
     }
 
-    // Generate and display TOTP + QR
+    // Generate TOTP, display code, show QR
     async function generateTOTP() {
       // 1) Generate random secret in Base64
       const secretBase64 = generateSecretBase64();
 
-      // 2) Convert Base64 to raw bytes
+      // 2) Convert Base64 to raw bytes -> Base32
       const rawBytes = Uint8Array.from(atob(secretBase64), c => c.charCodeAt(0));
-
-      // 3) Convert raw bytes to Base32 (for the otpauth:// standard)
       const secretBase32 = toBase32(rawBytes);
 
-      // 4) Display the Base64 seed in UI
+      // 3) Display the Base64 seed with extra info
       const seedDisplay = document.getElementById("seedDisplay");
-      seedDisplay.textContent = "Seed (Base64): " + secretBase64;
+      seedDisplay.textContent = "Seed (Base64, 6 digits, 120s, SHA512): " + secretBase64;
       seedDisplay.style.display = "block";
 
-      // 5) Calculate TOTP
+      // 4) Calculate TOTP
       const totpCode = await calculateTOTP(secretBase64, epochMadrid);
 
-      // 6) Display the TOTP code
+      // 5) Show the TOTP code
       const totpDisplay = document.getElementById("totpDisplay");
-      totpDisplay.textContent = "TOTP (120s): " + totpCode;
+      totpDisplay.textContent = "TOTP (120s, 6 digits, SHA512): " + totpCode;
       totpDisplay.style.display = "block";
 
-      // 7) Build otpauth:// URL: 
-      //    otpauth://totp/USER?secret=SECRETOENBASE32&issuer=SERVICE&digits=6&period=120
+      // 6) Build otpauth URL with period=120, digits=6, algorithm=SHA512
+      //    otpauth://totp/USER?secret=SECRETOENBASE32&issuer=SERVICE&digits=6&period=120&algorithm=SHA512
       const userValue = document.getElementById("username").value.trim() || "User";
       const serviceValue = document.getElementById("serviceName").value.trim() || "Service";
+
       const otpauthUrl =
         "otpauth://totp/" +
         encodeURIComponent(userValue) +
         "?secret=" + secretBase32 +
         "&issuer=" + encodeURIComponent(serviceValue) +
-        "&digits=6&period=120";
+        "&digits=6&period=120" +
+        "&algorithm=SHA512";
 
-      // 8) Render QR
+      // 7) Render the QR code
       const qrContainer = document.getElementById("qrContainer");
       qrContainer.innerHTML = "";
       QRCode.toCanvas(
@@ -310,7 +306,7 @@ $epochMadrid = time();
     }
   </style>
   <script>
-    // Block network calls to ensure privacy (offline usage recommended)
+    // Block network calls for privacy
     window.fetch = function() {
       console.log("fetch blocked");
       return Promise.reject(new Error("fetch blocked"));
