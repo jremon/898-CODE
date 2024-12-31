@@ -25,7 +25,7 @@ $epochMadrid = time();
       position: fixed;
       top: 1rem;
       right: 1rem;
-      background: #fff;
+      background: gold;
       color: #333;
       padding: 0.7rem 1.2rem;
       border-radius: 14px;
@@ -140,78 +140,167 @@ $epochMadrid = time();
   <script src="https://cdn.jsdelivr.net/npm/qrcode@latest/build/qrcode.min.js"></script>
 </head>
 <body>
-  <div class="corner-note">No data leaves your browser</div>
+  <div class="corner-note">🔒 No data leaves your browser</div>
   <div class="container">
     <h1>898.es CODE</h1>
-<div class="warning-red">For optimized security, run this page offline</div>
+    <div class="warning-red">For optimized security, run this page offline</div>
+    
     <label for="username">User (optional):</label>
     <input type="text" id="username" placeholder="User">
+
     <label for="serviceName">Service (optional):</label>
     <input type="text" id="serviceName" placeholder="Service">
+
     <button id="generateButton">Generate TOTP</button>
+
     <div id="totpDisplay" class="info-box totp-code" style="display:none;"></div>
     <div id="seedDisplay" class="info-box seed-base64" style="display:none;"></div>
     <div id="qrContainer" class="qr-container"></div>
   </div>
+
   <script>
+    // Current epoch in seconds (Madrid timezone, from PHP)
     const epochMadrid = <?php echo $epochMadrid; ?>;
+
+    // Generate 64 random bytes and return them as a Base64 string
     function generateSecretBase64() {
       const randomBytes = new Uint8Array(64);
       crypto.getRandomValues(randomBytes);
       return btoa(String.fromCharCode(...randomBytes));
     }
+
+    // Convert the raw bytes (Base64-decoded) to Base32 for "otpauth://"
+    // (simple subset, ignoring potential padding complexity for brevity)
+    function toBase32(uint8Arr) {
+      const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+      let bits = 0,
+          value = 0,
+          output = "";
+
+      for (let i = 0; i < uint8Arr.length; i++) {
+        value = (value << 8) | uint8Arr[i];
+        bits += 8;
+        while (bits >= 5) {
+          output += alphabet[(value >>> (bits - 5)) & 31];
+          bits -= 5;
+        }
+      }
+      if (bits > 0) {
+        output += alphabet[(value << (5 - bits)) & 31];
+      }
+      return output;
+    }
+
+    // Calculate TOTP using HMAC-SHA512, returning a 6-digit code
+    // (though standard TOTP typically uses SHA-1 or SHA-256,
+    //  we'll keep it with SHA-512 as in your original code)
     async function calculateTOTP(secretBase64, epochSeconds) {
       const keyData = Uint8Array.from(atob(secretBase64), c => c.charCodeAt(0));
-      const key = await crypto.subtle.importKey("raw", keyData, { name: "HMAC", hash: { name: "SHA-512" } }, false, ["sign"]);
+      // Prepare HMAC-SHA512 key
+      const key = await crypto.subtle.importKey(
+        "raw",
+        keyData,
+        { name: "HMAC", hash: { name: "SHA-512" } },
+        false,
+        ["sign"]
+      );
+
+      // TOTP period 120s => counter = floor(epoch / 120)
       const period = 120;
       const counterValue = Math.floor(epochSeconds / period);
+
+      // 8-byte buffer, big-endian for the counter
       const counterBuffer = new ArrayBuffer(8);
       const counterView = new DataView(counterBuffer);
       counterView.setUint32(4, counterValue, false);
+
+      // Compute HMAC
       const signature = await crypto.subtle.sign("HMAC", key, counterBuffer);
       const signatureBytes = new Uint8Array(signature);
-      const offset = signatureBytes[signatureBytes.length - 1] & 15;
+
+      // Dynamic Truncation
+      const offset = signatureBytes[signatureBytes.length - 1] & 0x0f;
       const binary =
-        ((signatureBytes[offset] & 127) << 24) |
-        ((signatureBytes[offset + 1] & 255) << 16) |
-        ((signatureBytes[offset + 2] & 255) << 8) |
-        (signatureBytes[offset + 3] & 255);
-      const totp = binary % 1000000;
+        ((signatureBytes[offset] & 0x7f) << 24) |
+        ((signatureBytes[offset + 1] & 0xff) << 16) |
+        ((signatureBytes[offset + 2] & 0xff) << 8)  |
+        (signatureBytes[offset + 3] & 0xff);
+
+      // Return 6-digit TOTP
+      const totp = binary % 10**6;
       return totp.toString().padStart(6, "0");
     }
+
+    // Generate and display TOTP + QR
     async function generateTOTP() {
-      const secret = generateSecretBase64();
+      // 1) Generate random secret in Base64
+      const secretBase64 = generateSecretBase64();
+
+      // 2) Convert Base64 to raw bytes
+      const rawBytes = Uint8Array.from(atob(secretBase64), c => c.charCodeAt(0));
+
+      // 3) Convert raw bytes to Base32 (for the otpauth:// standard)
+      const secretBase32 = toBase32(rawBytes);
+
+      // 4) Display the Base64 seed in UI
       const seedDisplay = document.getElementById("seedDisplay");
-      seedDisplay.textContent = "Seed (Base64): " + secret;
+      seedDisplay.textContent = "Seed (Base64): " + secretBase64;
       seedDisplay.style.display = "block";
-      const totpCode = await calculateTOTP(secret, epochMadrid);
+
+      // 5) Calculate TOTP
+      const totpCode = await calculateTOTP(secretBase64, epochMadrid);
+
+      // 6) Display the TOTP code
       const totpDisplay = document.getElementById("totpDisplay");
       totpDisplay.textContent = "TOTP (120s): " + totpCode;
       totpDisplay.style.display = "block";
+
+      // 7) Build otpauth:// URL: 
+      //    otpauth://totp/USER?secret=SECRETOENBASE32&issuer=SERVICE&digits=6&period=120
       const userValue = document.getElementById("username").value.trim() || "User";
       const serviceValue = document.getElementById("serviceName").value.trim() || "Service";
-      const dataString = "seed://" + encodeURIComponent(serviceValue) + ":" + encodeURIComponent(userValue) + "?seed=" + secret;
+      const otpauthUrl =
+        "otpauth://totp/" +
+        encodeURIComponent(userValue) +
+        "?secret=" + secretBase32 +
+        "&issuer=" + encodeURIComponent(serviceValue) +
+        "&digits=6&period=120";
+
+      // 8) Render QR
       const qrContainer = document.getElementById("qrContainer");
       qrContainer.innerHTML = "";
-      QRCode.toCanvas(dataString, { errorCorrectionLevel: "H" }, function(err, canvas) {
-        if (err) {
-          return;
+      QRCode.toCanvas(
+        otpauthUrl,
+        { errorCorrectionLevel: "H" },
+        function(err, canvas) {
+          if (err) {
+            console.error("Error generating QR:", err);
+            return;
+          }
+          qrContainer.appendChild(canvas);
         }
-        qrContainer.appendChild(canvas);
-      });
+      );
     }
+
     document.addEventListener("DOMContentLoaded", function() {
       const button = document.getElementById("generateButton");
       button.addEventListener("click", generateTOTP);
     });
   </script>
+
   <div class="banner-container" style="text-align: center; margin-top: 2rem;">
-    <a href="https://github.com/jremon/898-CODE/blob/main/code.php" target="_blank" style="text-decoration: none; margin-right: 10px;">
-      <img src="https://img.shields.io/badge/GitHub-898--CODE-blue?logo=github" alt="View on GitHub"
+    <a href="https://github.com/jremon/898-CODE/blob/main/code.php"
+       target="_blank"
+       style="text-decoration: none; margin-right: 10px;">
+      <img src="https://img.shields.io/badge/GitHub-898--CODE-blue?logo=github"
+           alt="View on GitHub"
            style="max-width: 200px; height: auto; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: transform 0.3s;">
     </a>
-    <a href="https://opensource.org/licenses/MIT" target="_blank" style="text-decoration: none; margin-left: 10px;">
-      <img src="https://img.shields.io/badge/License-MIT-green?logo=opensourceinitiative" alt="MIT License"
+    <a href="https://opensource.org/licenses/MIT"
+       target="_blank"
+       style="text-decoration: none; margin-left: 10px;">
+      <img src="https://img.shields.io/badge/License-MIT-green?logo=opensourceinitiative"
+           alt="MIT License"
            style="max-width: 200px; height: auto; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: transform 0.3s;">
     </a>
   </div>
@@ -221,6 +310,7 @@ $epochMadrid = time();
     }
   </style>
   <script>
+    // Block network calls to ensure privacy (offline usage recommended)
     window.fetch = function() {
       console.log("fetch blocked");
       return Promise.reject(new Error("fetch blocked"));
