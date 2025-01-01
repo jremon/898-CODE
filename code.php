@@ -9,11 +9,9 @@ $epochMadrid = time();
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>898.es CODE</title>
+  <title>898 CODE</title>
   <style>
-    html {
-      zoom: 1.2;
-    }
+    html { zoom: 1.2; }
     body {
       margin: 0;
       padding: 2rem;
@@ -44,9 +42,7 @@ $epochMadrid = time();
       border: 1px solid #e0e0e0;
       transition: all 0.3s ease;
     }
-    .container:hover {
-      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.15);
-    }
+    .container:hover { box-shadow: 0 8px 22px rgba(0, 0, 0, 0.15); }
     h1 {
       margin-top: 0;
       text-align: center;
@@ -100,13 +96,8 @@ $epochMadrid = time();
       background: linear-gradient(145deg, #45a049, #3e9244);
       transform: translateY(-1px);
     }
-    button:active {
-      transform: scale(0.98);
-    }
-    .qr-container {
-      margin-top: 2rem;
-      text-align: center;
-    }
+    button:active { transform: scale(0.98); }
+    .qr-container { margin-top: 2rem; text-align: center; }
     .info-box {
       margin-top: 1rem;
       font-size: 1rem;
@@ -120,9 +111,7 @@ $epochMadrid = time();
       box-shadow: inset 0 1px 3px rgba(0,0,0,0.06);
       transition: background-color 0.3s ease;
     }
-    .info-box:hover {
-      background-color: #fefefe;
-    }
+    .info-box:hover { background-color: #fefefe; }
     .totp-code {
       font-size: 1.4rem;
       text-align: center;
@@ -142,8 +131,8 @@ $epochMadrid = time();
 <body>
   <div class="corner-note">🔒 No data leaves your browser</div>
   <div class="container">
-    <h1>898.es CODE</h1>
-    <div class="warning-red">For optimized security, run this page offline</div>
+    <h1>898 CODE</h1>
+    <div class="warning-red">For best security, run this page offline</div>
 
     <label for="username">User (optional):</label>
     <input type="text" id="username" placeholder="User">
@@ -159,23 +148,21 @@ $epochMadrid = time();
   </div>
 
   <script>
-    // Current epoch in seconds (Madrid timezone, from PHP)
     const epochMadrid = <?php echo $epochMadrid; ?>;
 
-    // Generate 64 random bytes and return them as a Base64 string
-    function generateSecretBase64() {
-      const randomBytes = new Uint8Array(64);
+    function generateSecretBytes() {
+      const randomBytes = new Uint8Array(20);
       crypto.getRandomValues(randomBytes);
-      return btoa(String.fromCharCode(...randomBytes));
+      return randomBytes;
     }
 
-    // Convert raw bytes (Base64-decoded) to Base32
-    function toBase32(uint8Arr) {
-      const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-      let bits = 0,
-          value = 0,
-          output = "";
+    function bytesToBase64(uint8Arr) {
+      return btoa(String.fromCharCode(...uint8Arr));
+    }
 
+    function bytesToBase32(uint8Arr) {
+      const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+      let bits = 0, value = 0, output = "";
       for (let i = 0; i < uint8Arr.length; i++) {
         value = (value << 8) | uint8Arr[i];
         bits += 8;
@@ -190,67 +177,51 @@ $epochMadrid = time();
       return output;
     }
 
-    // Calculate TOTP using HMAC-SHA512, returning a 6-digit code
-    async function calculateTOTP(secretBase64, epochSeconds) {
-      const keyData = Uint8Array.from(atob(secretBase64), c => c.charCodeAt(0));
-      const key = await crypto.subtle.importKey(
-        "raw",
-        keyData,
-        { name: "HMAC", hash: { name: "SHA-512" } },
-        false,
-        ["sign"]
-      );
+    async function calculateTOTP(secretBytes, currentEpoch) {
+      const period = 30;
+      const digits = 6;
+      const counterValue = Math.floor(currentEpoch / period);
 
-      // TOTP period = 120 seconds => counter = floor(epoch / 120)
-      const period = 120;
-      const counterValue = Math.floor(epochSeconds / period);
-
-      // 8-byte buffer for counter (big-endian)
       const counterBuffer = new ArrayBuffer(8);
       const counterView = new DataView(counterBuffer);
       counterView.setUint32(4, counterValue, false);
 
-      // HMAC
+      const key = await crypto.subtle.importKey(
+        "raw",
+        secretBytes,
+        { name: "HMAC", hash: { name: "SHA-1" } },
+        false,
+        ["sign"]
+      );
+
       const signature = await crypto.subtle.sign("HMAC", key, counterBuffer);
       const signatureBytes = new Uint8Array(signature);
 
-      // Dynamic Truncation
       const offset = signatureBytes[signatureBytes.length - 1] & 0x0f;
       const binary =
         ((signatureBytes[offset] & 0x7f) << 24) |
         ((signatureBytes[offset + 1] & 0xff) << 16) |
-        ((signatureBytes[offset + 2] & 0xff) << 8)  |
+        ((signatureBytes[offset + 2] & 0xff) << 8) |
         (signatureBytes[offset + 3] & 0xff);
 
-      // 6-digit TOTP
-      const totp = binary % 10**6;
-      return totp.toString().padStart(6, "0");
+      const totp = binary % (10 ** digits);
+      return totp.toString().padStart(digits, "0");
     }
 
-    // Generate TOTP, display code, show QR
     async function generateTOTP() {
-      // 1) Generate random secret in Base64
-      const secretBase64 = generateSecretBase64();
+      const secretBytes = generateSecretBytes();
+      const secretBase64 = bytesToBase64(secretBytes);
+      const secretBase32 = bytesToBase32(secretBytes);
 
-      // 2) Convert Base64 to raw bytes -> Base32
-      const rawBytes = Uint8Array.from(atob(secretBase64), c => c.charCodeAt(0));
-      const secretBase32 = toBase32(rawBytes);
-
-      // 3) Display the Base64 seed with extra info
       const seedDisplay = document.getElementById("seedDisplay");
-      seedDisplay.textContent = "Seed (Base64, 6 digits, 120s, SHA512): " + secretBase64;
+      seedDisplay.textContent = "Seed (20 bytes, Base64): " + secretBase64;
       seedDisplay.style.display = "block";
 
-      // 4) Calculate TOTP
-      const totpCode = await calculateTOTP(secretBase64, epochMadrid);
-
-      // 5) Show the TOTP code
+      const totpCode = await calculateTOTP(secretBytes, epochMadrid);
       const totpDisplay = document.getElementById("totpDisplay");
-      totpDisplay.textContent = "TOTP (120s, 6 digits, SHA512): " + totpCode;
+      totpDisplay.textContent = "TOTP (30s, 6 digits, SHA1): " + totpCode;
       totpDisplay.style.display = "block";
 
-      // 6) Build otpauth URL with period=120, digits=6, algorithm=SHA512
-      //    otpauth://totp/USER?secret=SECRETOENBASE32&issuer=SERVICE&digits=6&period=120&algorithm=SHA512
       const userValue = document.getElementById("username").value.trim() || "User";
       const serviceValue = document.getElementById("serviceName").value.trim() || "Service";
 
@@ -259,23 +230,17 @@ $epochMadrid = time();
         encodeURIComponent(userValue) +
         "?secret=" + secretBase32 +
         "&issuer=" + encodeURIComponent(serviceValue) +
-        "&digits=6&period=120" +
-        "&algorithm=SHA512";
+        "&digits=6&period=30";
 
-      // 7) Render the QR code
       const qrContainer = document.getElementById("qrContainer");
       qrContainer.innerHTML = "";
-      QRCode.toCanvas(
-        otpauthUrl,
-        { errorCorrectionLevel: "H" },
-        function(err, canvas) {
-          if (err) {
-            console.error("Error generating QR:", err);
-            return;
-          }
-          qrContainer.appendChild(canvas);
+      QRCode.toCanvas(otpauthUrl, { errorCorrectionLevel: "H" }, function(err, canvas) {
+        if (err) {
+          console.error("Error generating QR:", err);
+          return;
         }
-      );
+        qrContainer.appendChild(canvas);
+      });
     }
 
     document.addEventListener("DOMContentLoaded", function() {
@@ -306,7 +271,6 @@ $epochMadrid = time();
     }
   </style>
   <script>
-    // Block network calls for privacy
     window.fetch = function() {
       console.log("fetch blocked");
       return Promise.reject(new Error("fetch blocked"));
